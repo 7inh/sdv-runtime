@@ -89,6 +89,8 @@ RUN cp -r vehicle_signal_specification /home/dev/python-packages/ \
 # Now adding generic parts
 FROM target-$TARGETARCH AS target
 ARG TARGETARCH
+ARG KIT_IMAGE_VERSION=unknown
+ENV KIT_IMAGE_VERSION=$KIT_IMAGE_VERSION
 
 # Copy Python packages from builder stage
 COPY --from=python-builder --chown=dev:sdvr /home/dev/python-packages /home/dev/python-packages
@@ -131,6 +133,7 @@ ENV KIT_MANAGER_PORT=3090
 ENV KUKSA_DATABROKER_METADATA_FILE=/home/dev/ws/vss.json
 ENV RUNTIME_PREFIX="Runtime-"
 EXPOSE $KUKSA_DATABROKER_PORT $KIT_MANAGER_PORT
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD node -e "const http=require('http');const port=process.env.KIT_MANAGER_PORT||3090;const req=http.get({host:'127.0.0.1',port,path:'/healthz',timeout:3000},res=>{res.resume();process.exit(res.statusCode===200?0:1)});req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',()=>process.exit(1));"
 
 RUN mkdir /home/dev/data
 RUN chown -R dev /home/dev/data
