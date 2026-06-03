@@ -14,3 +14,4 @@ vss-tools==4.0 # vss-tools, vehicle-model-generator
 protobuf==5.27.3 # kuksa-client, mock-provider, velocitas-sdk
 types-protobuf==5.27.0.20240626 # mock-provider
 httpimport
+nicegui==1.4.34
