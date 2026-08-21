@@ -29,6 +29,39 @@ apply_global_patch()
 
 from vehicle_model_manager import generate_vehicle_model, revert_vehicle_model
 import pkg_manager
+from functools import wraps
+
+# Retry decorator for KClient connections
+def retry_on_connection_error(max_retries=5, initial_delay=1.0, backoff_factor=1.5):
+    """Decorator to retry KClient connection with exponential backoff when databroker is starting"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            last_error = None
+
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    # Check if it's a connection error
+                    error_msg = str(e)
+                    if 'Connection refused' in error_msg or 'unavailable' in error_msg or 'UNAVAILABLE' in error_msg:
+                        last_error = e
+                        if attempt < max_retries - 1:
+                            print(f"[{func.__name__}] Connection attempt {attempt + 1}/{max_retries} failed: {error_msg[:100]}... Retrying in {delay:.1f}s", flush=True)
+                            time.sleep(delay)
+                            delay *= backoff_factor
+                        else:
+                            print(f"[{func.__name__}] All {max_retries} connection attempts failed", flush=True)
+                    else:
+                        # Not a connection error, raise immediately
+                        raise
+
+            if last_error:
+                raise last_error
+        return wrapper
+    return decorator
 
 BORKER_IP = '127.0.0.1'
 BROKER_PORT = 55555
@@ -611,6 +644,7 @@ def restartMockProvider():
     time.sleep(0.5)
     startMockService()
 
+@retry_on_connection_error(max_retries=5, initial_delay=1.0, backoff_factor=1.5)
 def appendMockSignal(signals):
     if signals is None or len(signals) <=0:
         return 0
@@ -651,6 +685,7 @@ def appendMockSignal(signals):
         
     return 0
 
+@retry_on_connection_error(max_retries=5, initial_delay=1.0, backoff_factor=1.5)
 def modifyMockSignal(input_str):
     with open(mock_signal_path,'w') as file:
         json_string = json.dumps(input_str)
@@ -669,6 +704,7 @@ def modifyMockSignal(input_str):
         file.truncate()
         return 0
 
+@retry_on_connection_error(max_retries=5, initial_delay=1.0, backoff_factor=1.5)
 def writeSignalsValue(input_str):
     json_str = json.dumps(input_str)
     signal_values = json.loads(json_str)
