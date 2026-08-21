@@ -16,11 +16,23 @@ const config = require('../configs');
 const convertPgCode = require('./convert_code');
 const { getInFlightConverts } = convertPgCode;
 const cors = require('cors')
-const { randomUUID } = require('crypto')
+const { randomUUID, createHash } = require('crypto')
 const { URL } = require('url')
 
 const BOOT_ID = randomUUID()
 const KIT_IMAGE_VERSION = process.env.KIT_IMAGE_VERSION || 'unknown'
+
+/**
+ * Generate a deterministic socket ID from user registration info.
+ * This ensures the same user always gets the same socket ID across sessions.
+ */
+function generateDeterministicSocketId(username, userId, domain) {
+    const data = `${username}:${userId}:${domain}`
+    return createHash('sha256')
+        .update(data)
+        .digest('hex')
+        .substring(0, 24) // Match socket.io's length (similar to their format)
+}
 
 function _earlyLog(event, meta) {
     const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
@@ -770,7 +782,26 @@ io.on('connection', (socket) => {
             log('warn', 'REGISTER_CLIENT_INVALID_PAYLOAD', { socketId: socket.id })
             return;
         }
-        CLIENTS.set(socket.id, {
+        // Generate deterministic socket ID from user info to track sessions across reconnects
+        const determinedSocketId = generateDeterministicSocketId(
+            payload.username || 'anonymous',
+            payload.user_id || 'anonymous',
+            payload.domain || 'unknown'
+        )
+
+        // Remove old socket association if same user reconnected with different socket
+        const existingClient = Array.from(CLIENTS.entries()).find(
+            ([_, client]) => client.user_id === payload.user_id &&
+                            client.username === payload.username &&
+                            client.domain === payload.domain
+        )
+        if (existingClient) {
+            CLIENTS.delete(existingClient[0])
+        }
+
+        CLIENTS.set(determinedSocketId, {
+            socket_id: socket.id,  // Keep the transport socket ID for routing messages
+            determined_socket_id: determinedSocketId,  // New deterministic ID for tracking
             username: payload.username,
             user_id: payload.user_id,
             domain: payload.domain,
@@ -779,10 +810,16 @@ io.on('connection', (socket) => {
         })
         log('info', 'REGISTER_CLIENT', {
             socketId: socket.id,
+            determinedSocketId: determinedSocketId,
             userId: payload.user_id || '',
             username: payload.username || '',
             domain: payload.domain || '',
             totalClients: CLIENTS.size,
+        })
+        // Send back the deterministic socket ID so client can track it
+        socket.emit('register_client-response', {
+            status: 'OK',
+            determinedSocketId: determinedSocketId,
         })
         socket.emit('list-all-kits-result', Array.from(KITS.values()))
         socket.emit('list-all-hw-result', Array.from(SYNCER_HW.values()))
@@ -884,11 +921,24 @@ io.on('connection', (socket) => {
         }
         SOCKET_TO_HW.delete(socket.id)
         // --------------------------------------------
-        let existClient = CLIENTS.get(socket.id)
-        if(existClient) {
-            CLIENTS.delete(socket.id)
+        // Find client by either transport socket.id or determined_socket_id
+        let existClient = null
+        let clientKey = null
+
+        // First try to find by determined_socket_id
+        for (const [key, client] of CLIENTS.entries()) {
+            if (client.socket_id === socket.id) {
+                existClient = client
+                clientKey = key
+                break
+            }
+        }
+
+        if(existClient && clientKey) {
+            CLIENTS.delete(clientKey)
             log('info', 'CLIENT_DISCONNECTED', {
                 socketId: socket.id,
+                determinedSocketId: existClient.determined_socket_id || '',
                 userId: existClient.user_id || '',
                 username: existClient.username || '',
                 reason,
