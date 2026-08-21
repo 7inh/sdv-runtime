@@ -52,12 +52,21 @@ WORKDIR /build
 # Copy requirements file
 COPY requirements-docker.txt .
 
+# Copy the GenAI UI framework and install it as a proper pip package so it
+# appears in `pip list` and has correct metadata (not just a raw directory).
+COPY setup.py MANIFEST.in ./
+COPY genai_ui_framework ./genai_ui_framework
+
 # Create target directory for packages
 RUN mkdir -p /home/dev/python-packages
 
 # Install all Python packages to the target directory
-ENV PYTHONPATH="/home/dev/python-packages:${PYTHONPATH}"
+ENV PYTHONPATH="/home/dev/python-packages"
 RUN pip3 install --no-cache-dir --target /home/dev/python-packages -r requirements-docker.txt
+
+# Install genai_ui_framework as a proper package with distribution metadata.
+RUN pip3 install --no-cache-dir --target /home/dev/python-packages /build
+RUN PYTHONPATH=/home/dev/python-packages python3 -c "import importlib.metadata as metadata, pathlib, nicegui, genai_ui_framework; dist = metadata.distribution('genai-ui-framework'); static_dir = pathlib.Path(genai_ui_framework.__file__).parent / 'static'; assert static_dir.is_dir(), static_dir; assert any(path.is_file() for path in static_dir.rglob('*')), static_dir; print(dist.metadata['Name'], dist.version, static_dir)"
 
 # Copy VSS specification from submodule and overlay files
 COPY vehicle_signal_specification ./vehicle_signal_specification
@@ -95,6 +104,8 @@ ENV KIT_IMAGE_VERSION=$KIT_IMAGE_VERSION
 
 # Copy Python packages from builder stage
 COPY --from=python-builder --chown=dev:sdvr /home/dev/python-packages /home/dev/python-packages
+COPY --from=python-builder --chown=dev:sdvr /build/genai_ui_framework/static /app/src/static
+RUN test -d /app/src/static && find /app/src/static -type f | grep -q .
 
 # Copy Node.js runtime and Kit-Manager source from kit-manager-builder
 COPY --from=kit-manager-builder /usr/local/bin/node /usr/local/bin/node
@@ -110,7 +121,7 @@ COPY mosquitto-no-auth.conf /etc/mosquitto/mosquitto-no-auth.conf
 COPY --chown=dev:sdvr --chmod=0755 start_services.sh /start_services.sh
 RUN sed -i 's/\r$//' /start_services.sh
 
-ENV PYTHONPATH="/home/dev/python-packages/:${PYTHONPATH}"
+ENV PYTHONPATH="/home/dev/python-packages"
 
 # Re-install grpcio to ensure it's built for the target platform
 RUN pip3 uninstall -y grpcio && pip3 install grpcio==1.64.1
