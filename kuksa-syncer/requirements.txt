@@ -1,3 +1,4 @@
 aiohttp
 python-socketio
 kuksa_client==0.4.3
+nicegui==1.4.34
